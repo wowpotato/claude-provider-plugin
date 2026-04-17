@@ -54,10 +54,11 @@ function directSwitch(name: string): void {
   switchToProvider(profile.name);
   console.log(`✅ Switched to ${chalk.cyan(profile.name)}. Run "claude" then /status.`);
 
-  // Opt-in: automatically swap the keychain OAuth credential to match the
-  // newly activated profile. Enables seamless switching between profiles
-  // that share an ANTHROPIC_BASE_URL (e.g. multiple Anthropic plans).
-  if (isMacOS() && isCredentialAutoSwapEnabled()) {
+  // Personal-branch behavior: auto-swap the keychain OAuth credential
+  // whenever a credentials.<profile>.json exists. Users who never saved
+  // a credential file see no change; users who did get seamless Pro ↔
+  // Team ↔ Enterprise switching on a single Anthropic account.
+  if (isMacOS() && isCredentialAutoSwapDisabled() === false) {
     const result = restoreCredentialForProfile(profile.name);
     if (result.restored) {
       console.log(chalk.dim(`   (keychain credential restored from ${result.path})`));
@@ -67,10 +68,11 @@ function directSwitch(name: string): void {
   }
 }
 
-function isCredentialAutoSwapEnabled(): boolean {
+// Opt-out instead of opt-in in this personal branch.
+function isCredentialAutoSwapDisabled(): boolean {
   const value = process.env.CPR_SWAP_CREDENTIALS;
   if (!value) return false;
-  return !["0", "false", "no", "off"].includes(value.toLowerCase());
+  return ["0", "false", "no", "off"].includes(value.toLowerCase());
 }
 
 /**
