@@ -6,6 +6,8 @@ import { runInteractiveMenu } from "./interactive.js";
 import { mcpServer } from "./mcp.js";
 import {
   isMacOS,
+  isCredentialSwapDisabled,
+  captureActiveKeychainBeforeSwitch,
   saveCredentialForProfile,
   restoreCredentialForProfile,
   listSavedCredentials,
@@ -89,6 +91,19 @@ function directSwitch(name: string): void {
     process.exit(1);
   }
 
+  // Save the current active profile's keychain BEFORE we overwrite it. Without
+  // this, tokens that rotated during the previous Claude Code session get lost
+  // the moment we switch, and the next restore brings back stale credentials
+  // that make Claude Code 401 on first request.
+  if (isMacOS() && !isCredentialSwapDisabled()) {
+    const capture = captureActiveKeychainBeforeSwitch(profile.name, profiles);
+    if (capture.captured) {
+      console.log(
+        chalk.dim(`   (captured current keychain → ${capture.path} before switch)`)
+      );
+    }
+  }
+
   switchToProvider(profile.name);
   console.log(`✅ Switched to ${chalk.cyan(profile.name)}. Run "claude" then /status.`);
 
@@ -96,7 +111,7 @@ function directSwitch(name: string): void {
   // whenever a credentials.<profile>.json exists. Users who never saved
   // a credential file see no change; users who did get seamless Pro ↔
   // Team ↔ Enterprise switching on a single Anthropic account.
-  if (isMacOS() && isCredentialAutoSwapDisabled() === false) {
+  if (isMacOS() && !isCredentialSwapDisabled()) {
     const result = restoreCredentialForProfile(profile.name);
     if (result.restored) {
       console.log(chalk.dim(`   (keychain credential restored from ${result.path})`));
@@ -106,13 +121,6 @@ function directSwitch(name: string): void {
   }
 
   warnIfClaudeRunning();
-}
-
-// Opt-out instead of opt-in in this personal branch.
-function isCredentialAutoSwapDisabled(): boolean {
-  const value = process.env.CPR_SWAP_CREDENTIALS;
-  if (!value) return false;
-  return ["0", "false", "no", "off"].includes(value.toLowerCase());
 }
 
 /**

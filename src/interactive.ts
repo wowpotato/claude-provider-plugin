@@ -16,7 +16,26 @@ import {
   deleteProfile,
   getProfileFilePath,
 } from "./profiles.js";
-import { isMacOS, restoreCredentialForProfile } from "./credentials.js";
+import {
+  isMacOS,
+  isCredentialSwapDisabled,
+  captureActiveKeychainBeforeSwitch,
+  restoreCredentialForProfile,
+} from "./credentials.js";
+
+/**
+ * Snapshot the current active profile's keychain before overwriting it, so
+ * access/refresh token rotation from the just-ended Claude Code session is
+ * preserved. Without this, switching away then back restores a stale file and
+ * the next request 401s.
+ */
+function maybeCaptureActiveBeforeSwitch(targetProfile: string): void {
+  if (!isMacOS() || isCredentialSwapDisabled()) return;
+  const capture = captureActiveKeychainBeforeSwitch(targetProfile, listProfiles());
+  if (capture.captured && capture.profile) {
+    p.log.info(`Captured current '${capture.profile}' keychain → ${capture.path}`);
+  }
+}
 
 /**
  * Run the same post-switch credential restore that the non-interactive
@@ -26,10 +45,7 @@ import { isMacOS, restoreCredentialForProfile } from "./credentials.js";
  * OAuth token.
  */
 function maybeRestoreCredentialAfterSwitch(profile: string): void {
-  if (!isMacOS()) return;
-  const value = process.env.CPR_SWAP_CREDENTIALS;
-  const disabled = !!value && ["0", "false", "no", "off"].includes(value.toLowerCase());
-  if (disabled) return;
+  if (!isMacOS() || isCredentialSwapDisabled()) return;
 
   const result = restoreCredentialForProfile(profile);
   if (result.restored) {
@@ -113,6 +129,7 @@ export async function addProviderInteractive(): Promise<string | null> {
   if (p.isCancel(makeActive)) return null;
 
   if (makeActive) {
+    maybeCaptureActiveBeforeSwitch(providerName);
     switchToProvider(providerName);
     maybeRestoreCredentialAfterSwitch(providerName);
     p.note(`Active provider is now: ${chalk.cyan(providerName)}`, "Switched");
@@ -323,6 +340,7 @@ async function runInteractiveMenuWithProfiles(
   }
 
   try {
+    maybeCaptureActiveBeforeSwitch(String(choice));
     switchToProvider(String(choice));
     maybeRestoreCredentialAfterSwitch(String(choice));
     p.outro(`✅ Switched to ${chalk.cyan(choice)}. Run ${chalk.bold("claude")} then /status.`);

@@ -2,7 +2,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import type { Profile } from "./types.js";
 import { getClaudeDir } from "./utils.js";
+import { detectActiveProfile } from "./profiles.js";
 
 /**
  * macOS keychain integration for swapping Claude Code OAuth credentials
@@ -153,6 +155,42 @@ export function restoreCredentialForProfile(profile: string): {
 
   writeKeychainCredential(token);
   return { restored: true, path: credPath };
+}
+
+/**
+ * Return true when the user has explicitly opted out of keychain credential
+ * swapping via CPR_SWAP_CREDENTIALS=0|false|no|off. Defaults to enabled.
+ */
+export function isCredentialSwapDisabled(): boolean {
+  const value = process.env.CPR_SWAP_CREDENTIALS;
+  if (!value) return false;
+  return ["0", "false", "no", "off"].includes(value.toLowerCase());
+}
+
+/**
+ * Before switching to `targetProfile`, snapshot the keychain credential of
+ * whichever profile is currently active. This preserves any access/refresh
+ * token rotation that happened during the just-ended Claude Code session;
+ * otherwise the next restore would bring back a stale file and 401.
+ *
+ * Callers must pass the profile list as seen *before* switchToProvider runs,
+ * so detectActiveProfile can still read the outgoing .active-profile marker.
+ * No-op when the current active profile is the same as the target, unknown,
+ * or the keychain is empty.
+ */
+export function captureActiveKeychainBeforeSwitch(
+  targetProfile: string,
+  profiles: Profile[]
+): { captured: boolean; profile?: string; reason?: string; path?: string } {
+  if (!isMacOS()) return { captured: false, reason: "macOS only" };
+
+  const current = detectActiveProfile(profiles);
+  if (!current) return { captured: false, reason: "no active profile detected" };
+  if (current === targetProfile) return { captured: false, reason: "already active" };
+
+  const result = saveCredentialForProfile(current);
+  if (result.saved) return { captured: true, profile: current, path: result.path };
+  return { captured: false, profile: current, reason: result.reason, path: result.path };
 }
 
 /**
