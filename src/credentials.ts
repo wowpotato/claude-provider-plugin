@@ -135,9 +135,20 @@ export function restoreCredentialForProfile(profile: string): {
     return { restored: false, reason: "no saved credential for profile", path: credPath };
   }
 
-  const token = fs.readFileSync(credPath, "utf8").trim();
-  if (!token) {
+  const raw = fs.readFileSync(credPath, "utf8").trim();
+  if (!raw) {
     return { restored: false, reason: "credential file is empty", path: credPath };
+  }
+
+  // Older versions of this tool — and hand-edited files — may store the
+  // credential as pretty-printed JSON. The macOS keychain refuses multi-line
+  // values (it stores them as binary and Claude Code then can't parse them),
+  // so re-serialize as a single line before writing.
+  let token: string;
+  try {
+    token = JSON.stringify(JSON.parse(raw));
+  } catch {
+    return { restored: false, reason: "credential file is not valid JSON", path: credPath };
   }
 
   writeKeychainCredential(token);

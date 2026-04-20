@@ -1,5 +1,6 @@
 import { Command } from "commander";
 import chalk from "chalk";
+import { execFileSync } from "node:child_process";
 import { listProfiles, detectActiveProfile, switchToProvider } from "./profiles.js";
 import { runInteractiveMenu } from "./interactive.js";
 import { mcpServer } from "./mcp.js";
@@ -9,6 +10,43 @@ import {
   restoreCredentialForProfile,
   listSavedCredentials,
 } from "./credentials.js";
+
+/**
+ * Detect whether a Claude Code CLI process is currently running. When it is,
+ * the process has already loaded its OAuth credential into memory for the
+ * previously-active plan, so the ongoing session will keep hitting the old
+ * plan's rate limits even after we swap keychain/credential files.
+ */
+function countRunningClaudeProcesses(): number {
+  try {
+    const out = execFileSync("pgrep", ["-f", "/claude( |$)|claude/versions/"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const pids = out.trim().split("\n").filter(Boolean);
+    // Exclude this very process and its parent shell.
+    const ownPid = process.pid;
+    const ppid = process.ppid;
+    return pids.filter((p) => {
+      const n = Number(p);
+      return !Number.isNaN(n) && n !== ownPid && n !== ppid;
+    }).length;
+  } catch {
+    return 0;
+  }
+}
+
+function warnIfClaudeRunning(): void {
+  const n = countRunningClaudeProcesses();
+  if (n > 0) {
+    console.warn(
+      chalk.yellow(`⚠ ${n} Claude Code session(s) still running with the previous plan's token.`)
+    );
+    console.warn(
+      chalk.yellow("   Exit those sessions (/exit) and start a new `claude` for the swap to apply.")
+    );
+  }
+}
 
 /**
  * Display list of installed providers
@@ -66,6 +104,8 @@ function directSwitch(name: string): void {
       console.warn(chalk.yellow(`   (credential restore skipped: ${result.reason})`));
     }
   }
+
+  warnIfClaudeRunning();
 }
 
 // Opt-out instead of opt-in in this personal branch.
