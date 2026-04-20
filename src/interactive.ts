@@ -16,6 +16,28 @@ import {
   deleteProfile,
   getProfileFilePath,
 } from "./profiles.js";
+import { isMacOS, restoreCredentialForProfile } from "./credentials.js";
+
+/**
+ * Run the same post-switch credential restore that the non-interactive
+ * `cpr <profile>` path does. Without this the interactive menu leaves the
+ * macOS keychain out of sync — settings.json and `.active-profile` get
+ * updated, but Claude Code still authenticates with the previous plan's
+ * OAuth token.
+ */
+function maybeRestoreCredentialAfterSwitch(profile: string): void {
+  if (!isMacOS()) return;
+  const value = process.env.CPR_SWAP_CREDENTIALS;
+  const disabled = !!value && ["0", "false", "no", "off"].includes(value.toLowerCase());
+  if (disabled) return;
+
+  const result = restoreCredentialForProfile(profile);
+  if (result.restored) {
+    p.log.info(`Keychain credential restored from ${result.path}`);
+  } else if (result.reason && result.reason !== "no saved credential for profile") {
+    p.log.warn(`Credential restore skipped: ${result.reason}`);
+  }
+}
 
 /**
  * Interactive prompt to add a new provider
@@ -92,6 +114,7 @@ export async function addProviderInteractive(): Promise<string | null> {
 
   if (makeActive) {
     switchToProvider(providerName);
+    maybeRestoreCredentialAfterSwitch(providerName);
     p.note(`Active provider is now: ${chalk.cyan(providerName)}`, "Switched");
   }
 
@@ -301,6 +324,7 @@ async function runInteractiveMenuWithProfiles(
 
   try {
     switchToProvider(String(choice));
+    maybeRestoreCredentialAfterSwitch(String(choice));
     p.outro(`✅ Switched to ${chalk.cyan(choice)}. Run ${chalk.bold("claude")} then /status.`);
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
